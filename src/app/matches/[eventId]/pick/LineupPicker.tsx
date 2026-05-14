@@ -1,0 +1,409 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import { ImageWithFallback } from "@/components/ImageWithFallback";
+import { getPlayerImageUrl, type AppPlayer, type AppRole } from "@/lib/by433";
+
+type Pick = {
+  slotId: string;
+  playerId: number;
+  role: AppRole;
+};
+
+type PitchSlot = {
+  id: string;
+  role: AppRole;
+  label: string;
+  x: number;
+  y: number;
+};
+
+const FORMATIONS = ["4-3-3", "4-3-2-1", "4-2-3-1", "4-4-2", "3-5-2", "3-4-3", "5-3-2", "5-4-1"];
+
+type LineupPickerProps = {
+  players: AppPlayer[];
+  teamName: string;
+  teamLogoUrl?: string | null;
+  shirtColor?: string | null;
+  initialFormation?: string;
+};
+
+export function LineupPicker({ players, teamName, teamLogoUrl, shirtColor, initialFormation = "4-3-3" }: LineupPickerProps) {
+  const defaultFormation = FORMATIONS.includes(initialFormation) ? initialFormation : "4-3-3";
+  const [formation, setFormation] = useState<string | null>(null);
+  const pitchSlots = useMemo(() => buildPitchSlots(formation ?? defaultFormation), [formation, defaultFormation]);
+  const availablePlayers = useMemo(() => players, [players]);
+  const [picks, setPicks] = useState<Pick[]>([]);
+  const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const selectedPlayerIds = new Set(picks.map((pick) => pick.playerId));
+  const picksBySlot = new Map(picks.map((pick) => [pick.slotId, pick]));
+  const activeSlot = pitchSlots.find((slot) => slot.id === activeSlotId) ?? null;
+  const activePick = activeSlotId ? picksBySlot.get(activeSlotId) : null;
+  const activePlayer = activePick ? availablePlayers.find((player) => player.id === activePick.playerId) : null;
+
+  const pickerPlayers = availablePlayers.filter((player) => {
+    const q = query.trim().toLowerCase();
+    const isCurrentSlotPlayer = activePick?.playerId === player.id;
+    const isAlreadySelectedElsewhere = selectedPlayerIds.has(player.id) && !isCurrentSlotPlayer;
+    if (isAlreadySelectedElsewhere) return false;
+    if (!q) return true;
+    return player.name.toLowerCase().includes(q);
+  });
+
+  function getPlayer(playerId: number) {
+    return availablePlayers.find((player) => player.id === playerId);
+  }
+
+  function assignPlayerToSlot(playerId: number, slot: PitchSlot) {
+    setPicks((current) => {
+      const withoutPlayerOrSlot = current.filter((pick) => pick.playerId !== playerId && pick.slotId !== slot.id);
+      return [...withoutPlayerOrSlot, { slotId: slot.id, playerId, role: slot.role }];
+    });
+    closeBottomSheet();
+  }
+
+  function removeSlot(slotId: string) {
+    setPicks((current) => current.filter((pick) => pick.slotId !== slotId));
+    closeBottomSheet();
+  }
+
+  function openSlot(slot: PitchSlot) {
+    setQuery("");
+    setActiveSlotId(slot.id);
+  }
+
+  function closeBottomSheet() {
+    setActiveSlotId(null);
+    setQuery("");
+  }
+
+  if (!formation) {
+    return (
+      <section className="rounded-[2rem] bg-white p-4 shadow-sm ring-1 ring-zinc-200 md:p-6">
+        <TeamHeader teamName={teamName} teamLogoUrl={teamLogoUrl} shirtColor={shirtColor} formation={defaultFormation} />
+        <div className="mt-6">
+          <p className="text-xs font-bold uppercase tracking-[0.25em] text-emerald-600">Step 1</p>
+          <h2 className="mt-2 text-2xl font-black md:text-3xl">Pilih formasi dulu</h2>
+          <p className="mt-2 text-sm font-semibold text-zinc-500">Setelah formasi dipilih, tap posisi di pitch untuk memilih pemain.</p>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+          {FORMATIONS.map((item) => (
+            <button
+              key={item}
+              onClick={() => setFormation(item)}
+              className={`rounded-3xl border p-4 text-left transition hover:-translate-y-0.5 hover:shadow-md md:p-5 ${item === defaultFormation ? "border-emerald-300 bg-emerald-50" : "border-zinc-200 bg-zinc-50"}`}
+            >
+              <p className="text-2xl font-black text-zinc-950">{item}</p>
+              <p className="mt-2 text-xs font-bold uppercase tracking-wide text-zinc-500">{describeFormation(item)}</p>
+              {item === defaultFormation && <p className="mt-3 inline-flex rounded-full bg-emerald-600 px-3 py-1 text-xs font-black text-white">Suggested</p>}
+            </button>
+          ))}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
+      <section className="-mx-4 min-h-[calc(100dvh-88px)] bg-white px-3 pb-4 pt-3 md:mx-0 md:min-h-0 md:rounded-[2rem] md:p-5 md:shadow-sm md:ring-1 md:ring-zinc-200">
+        <div className="mb-3 space-y-3">
+          <TeamHeader teamName={teamName} teamLogoUrl={teamLogoUrl} shirtColor={shirtColor} formation={formation} />
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-emerald-600">Step 2</p>
+              <h2 className="text-lg font-black md:text-2xl">Tap posisi di pitch</h2>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => { setFormation(null); setPicks([]); }} className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700">Ganti</button>
+              <div className="rounded-2xl bg-zinc-950 px-3 py-2 text-right text-white">
+                <p className="text-[10px] font-bold text-zinc-300">Selected</p>
+                <p className="text-lg font-black">{picks.length}/11</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="relative h-[calc(100dvh-245px)] min-h-[500px] overflow-hidden rounded-[1.5rem] border border-white/20 bg-[#064c09] shadow-inner sm:h-[620px] md:h-[760px]">
+          <PitchLines />
+
+          {pitchSlots.map((slot) => {
+            const pick = picksBySlot.get(slot.id);
+            const player = pick ? getPlayer(pick.playerId) : null;
+
+            return (
+              <div
+                key={slot.id}
+                className="absolute -translate-x-1/2 -translate-y-1/2"
+                style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+              >
+                <button
+                  type="button"
+                  onClick={() => openSlot(slot)}
+                  className="group flex w-16 flex-col items-center text-center md:w-24"
+                  title={`Choose ${slot.label}`}
+                >
+                  {player ? (
+                    <>
+                      <div className="relative grid h-10 w-10 place-items-center rounded-full bg-white shadow-lg ring-2 ring-emerald-300 md:h-14 md:w-14">
+                        <ImageWithFallback src={getPlayerImageUrl(player.id)} alt={player.name} size={38} fallbackLabel={player.name} />
+                        <span className="absolute -right-1 -top-1 rounded-full bg-zinc-950 px-1.5 py-0.5 text-[9px] font-black text-white md:text-[10px]">{slot.label}</span>
+                      </div>
+                      <span className="mt-1 line-clamp-2 max-w-16 rounded-lg bg-black/45 px-1 py-0.5 text-[9px] font-black leading-tight text-white backdrop-blur md:max-w-24 md:px-1.5 md:py-1 md:text-xs">
+                        {player.name}
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-white/45 bg-white/10 text-[10px] font-black text-white transition group-hover:border-emerald-300 group-hover:bg-emerald-400/25 md:h-20 md:w-20 md:text-xs">
+                        {slot.label}
+                      </div>
+                      <span className="mt-1 rounded-full bg-black/35 px-2 py-0.5 text-[9px] font-bold text-white">Tap</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <p className="text-xs font-semibold text-zinc-500 md:text-sm">Tap posisi kosong/terisi untuk pilih atau ganti pemain.</p>
+          <button disabled={picks.length !== 11} className="rounded-full bg-zinc-950 px-5 py-3 text-sm font-black text-white disabled:bg-zinc-300">Submit</button>
+        </div>
+      </section>
+
+      <section className="hidden rounded-[2rem] bg-white p-5 shadow-sm ring-1 ring-zinc-200 lg:block">
+        <div className="mb-4">
+          <p className="text-xs font-bold uppercase tracking-wide text-emerald-600">Squad</p>
+          <h2 className="text-2xl font-black">Players</h2>
+          <p className="mt-1 text-sm font-semibold text-zinc-500">Sorted by position. Click a pitch slot to assign.</p>
+        </div>
+        <DesktopPlayerList players={availablePlayers} />
+      </section>
+      </div>
+
+      {activeSlot && (
+        <PlayerBottomSheet
+          slot={activeSlot}
+          currentPlayer={activePlayer ?? null}
+          players={pickerPlayers}
+          query={query}
+          onQueryChange={setQuery}
+          onClose={closeBottomSheet}
+          onRemove={() => removeSlot(activeSlot.id)}
+          onPick={(playerId) => assignPlayerToSlot(playerId, activeSlot)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DesktopPlayerList({ players }: { players: AppPlayer[] }) {
+  return (
+    <div className="max-h-[760px] space-y-2 overflow-auto pr-1">
+      {players.map((player) => (
+        <div key={player.id} className="flex items-center gap-3 rounded-2xl bg-zinc-50 p-2">
+          <ImageWithFallback src={getPlayerImageUrl(player.id)} alt={player.name} size={42} fallbackLabel={player.name} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-bold">{player.name}</p>
+            <p className="text-xs font-semibold text-zinc-500">#{player.shirtNumber ?? "-"} · {player.role ?? player.position ?? "-"}</p>
+          </div>
+          <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-zinc-600">{player.role ?? "-"}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PlayerBottomSheet({
+  slot,
+  currentPlayer,
+  players,
+  query,
+  onQueryChange,
+  onClose,
+  onRemove,
+  onPick,
+}: {
+  slot: PitchSlot;
+  currentPlayer: AppPlayer | null;
+  players: AppPlayer[];
+  query: string;
+  onQueryChange: (value: string) => void;
+  onClose: () => void;
+  onRemove: () => void;
+  onPick: (playerId: number) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end bg-black/45 backdrop-blur-[2px]" onClick={onClose}>
+      <div className="max-h-[78dvh] w-full rounded-t-[2rem] bg-white p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+        <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-300" />
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-600">Choose player</p>
+            <h3 className="mt-1 text-2xl font-black">{slot.label}</h3>
+            <p className="text-sm font-semibold text-zinc-500">Recommended role: {slot.role}</p>
+          </div>
+          <button onClick={onClose} className="rounded-full bg-zinc-100 px-4 py-2 text-sm font-black text-zinc-700">Close</button>
+        </div>
+
+        {currentPlayer && (
+          <div className="mb-3 flex items-center gap-3 rounded-2xl bg-emerald-50 p-3 ring-1 ring-emerald-100">
+            <ImageWithFallback src={getPlayerImageUrl(currentPlayer.id)} alt={currentPlayer.name} size={44} fallbackLabel={currentPlayer.name} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-black">Current: {currentPlayer.name}</p>
+              <p className="text-xs font-semibold text-zinc-500">#{currentPlayer.shirtNumber ?? "-"} · {currentPlayer.role ?? currentPlayer.position ?? "-"}</p>
+            </div>
+            <button onClick={onRemove} className="rounded-full bg-red-500 px-3 py-2 text-xs font-black text-white">Remove</button>
+          </div>
+        )}
+
+        <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search player" className="mb-3 w-full rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm font-semibold outline-none focus:border-emerald-500" autoFocus />
+
+        <div className="max-h-[48dvh] space-y-2 overflow-auto pr-1">
+          {players.map((player) => {
+            const roleMatches = player.role === slot.role;
+            return (
+              <button key={player.id} onClick={() => onPick(player.id)} className="flex w-full items-center gap-3 rounded-2xl bg-zinc-50 p-2 text-left ring-1 ring-transparent transition hover:ring-emerald-200">
+                <ImageWithFallback src={getPlayerImageUrl(player.id)} alt={player.name} size={42} fallbackLabel={player.name} />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-bold">{player.name}</p>
+                  <p className="text-xs font-semibold text-zinc-500">#{player.shirtNumber ?? "-"} · {player.role ?? player.position ?? "-"}</p>
+                </div>
+                {roleMatches && <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-black text-white">Fit</span>}
+              </button>
+            );
+          })}
+          {players.length === 0 && <p className="rounded-2xl bg-zinc-50 p-4 text-sm font-semibold text-zinc-500">Pemain tidak ditemukan.</p>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TeamHeader({ teamName, teamLogoUrl, shirtColor, formation }: { teamName: string; teamLogoUrl?: string | null; shirtColor?: string | null; formation: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-3xl bg-zinc-50 p-3 ring-1 ring-zinc-100">
+      <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl md:h-12 md:w-12" style={{ backgroundColor: shirtColor ?? "transparent" }}>
+        <ImageWithFallback src={teamLogoUrl ?? null} alt={teamName} size={38} fallbackLabel={teamName} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-base font-black md:text-lg">{teamName}</p>
+        <p className="text-xs font-semibold text-zinc-500">Build your predicted XI</p>
+      </div>
+      <div className="rounded-2xl bg-white px-3 py-2 text-center shadow-sm ring-1 ring-zinc-200">
+        <p className="text-[10px] font-bold uppercase tracking-wide text-zinc-400">Formation</p>
+        <p className="text-sm font-black">{formation}</p>
+      </div>
+    </div>
+  );
+}
+
+function describeFormation(formation: string) {
+  const rows = parseFormation(formation);
+  if (rows.length === 3) return "balanced";
+  if (rows.length === 4) return "with AM/DM line";
+  if (rows[0] === 3) return "back three";
+  if (rows[0] === 5) return "defensive";
+  return "classic";
+}
+
+function buildPitchSlots(formation: string): PitchSlot[] {
+  const lines = parseFormation(formation);
+  const slots: PitchSlot[] = [{ id: "gk", role: "GK", label: "GK", x: 50, y: 90 }];
+  const rowYs = getRowYs(lines.length);
+
+  lines.forEach((count, rowIndex) => {
+    const role = getRoleForRow(rowIndex, lines.length);
+    const labels = getLabelsForRow(role, count);
+    const spacing = count > 1 ? clamp(85 / (count - 1), 0, 30) : 0;
+
+    for (let index = 0; index < count; index += 1) {
+      const x = 50 + (index - (count - 1) / 2) * spacing;
+      slots.push({
+        id: `${role.toLowerCase()}-${rowIndex}-${index}`,
+        role,
+        label: labels[index] ?? role,
+        x,
+        y: rowYs[rowIndex],
+      });
+    }
+  });
+
+  return slots;
+}
+
+function parseFormation(formation: string) {
+  const parsed = formation.split("-").map((value) => Number.parseInt(value, 10));
+  if (parsed.length === 0 || parsed.some((value) => Number.isNaN(value)) || parsed.reduce((sum, value) => sum + value, 0) !== 10) {
+    return [4, 3, 3];
+  }
+  return parsed;
+}
+
+function getRowYs(rowCount: number) {
+  if (rowCount === 2) return [62, 28];
+  if (rowCount === 3) return [68, 48, 24];
+  if (rowCount === 4) return [70, 55, 40, 22];
+  return Array.from({ length: rowCount }, (_, index) => 70 - index * (48 / Math.max(1, rowCount - 1)));
+}
+
+function getRoleForRow(rowIndex: number, rowCount: number): AppRole {
+  if (rowIndex === 0) return "DEF";
+  if (rowIndex === rowCount - 1) return "FWD";
+  return "MID";
+}
+
+function getLabelsForRow(role: AppRole, count: number) {
+  if (role === "DEF") {
+    if (count === 3) return ["LCB", "CB", "RCB"];
+    if (count === 4) return ["LB", "CB", "CB", "RB"];
+    if (count === 5) return ["LWB", "CB", "CB", "CB", "RWB"];
+  }
+  if (role === "MID") {
+    if (count === 1) return ["DM"];
+    if (count === 2) return ["CM", "CM"];
+    if (count === 3) return ["CM", "DM", "CM"];
+    if (count === 4) return ["LM", "CM", "CM", "RM"];
+    if (count === 5) return ["LM", "CM", "DM", "CM", "RM"];
+  }
+  if (role === "FWD") {
+    if (count === 1) return ["ST"];
+    if (count === 2) return ["ST", "ST"];
+    if (count === 3) return ["LW", "ST", "RW"];
+  }
+  return Array.from({ length: count }, () => role);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function PitchLines() {
+  return (
+    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      <rect x="4" y="3" width="92" height="94" rx="2" fill="none" stroke="rgba(255,255,255,.24)" strokeWidth="0.45" />
+      <line x1="4" y1="50" x2="96" y2="50" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
+      <circle cx="50" cy="50" r="10" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
+      <circle cx="50" cy="50" r="0.8" fill="rgba(255,255,255,.25)" />
+
+      <rect x="22" y="3" width="56" height="17" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
+      <rect x="36" y="3" width="28" height="7" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
+      <circle cx="50" cy="24" r="0.8" fill="rgba(255,255,255,.25)" />
+      <path d="M40 20 Q50 27 60 20" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.35" />
+
+      <rect x="22" y="80" width="56" height="17" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
+      <rect x="36" y="90" width="28" height="7" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
+      <circle cx="50" cy="76" r="0.8" fill="rgba(255,255,255,.25)" />
+      <path d="M40 80 Q50 73 60 80" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.35" />
+
+      {Array.from({ length: 9 }).map((_, index) => (
+        <rect key={index} x={4 + index * 10.2} y="3" width="10.2" height="94" fill={index % 2 === 0 ? "rgba(255,255,255,.035)" : "rgba(0,0,0,.035)"} />
+      ))}
+    </svg>
+  );
+}
