@@ -314,16 +314,17 @@ function describeFormation(formation: string) {
 
 function buildPitchSlots(formation: string): PitchSlot[] {
   const lines = parseFormation(formation);
-  const slots: PitchSlot[] = [{ id: "gk", role: "GK", label: "GK", x: 50, y: 90 }];
+  const slots: PitchSlot[] = [{ id: "gk", role: "GK", label: "GK", x: 50, y: 87 }];
   const rowYs = getRowYs(lines.length);
 
   lines.forEach((count, rowIndex) => {
     const role = getRoleForRow(rowIndex, lines.length);
     const labels = getLabelsForRow(role, count);
-    const spacing = count > 1 ? clamp(85 / (count - 1), 0, 30) : 0;
+    // Limit horizontal spread so slots stay well inside the pitch edges
+    const maxSpread = count > 1 ? clamp(76 / (count - 1), 0, 26) : 0;
 
     for (let index = 0; index < count; index += 1) {
-      const x = 50 + (index - (count - 1) / 2) * spacing;
+      const x = 50 + (index - (count - 1) / 2) * maxSpread;
       slots.push({
         id: `${role.toLowerCase()}-${rowIndex}-${index}`,
         role,
@@ -346,10 +347,11 @@ function parseFormation(formation: string) {
 }
 
 function getRowYs(rowCount: number) {
-  if (rowCount === 2) return [62, 28];
-  if (rowCount === 3) return [68, 48, 24];
-  if (rowCount === 4) return [70, 55, 40, 22];
-  return Array.from({ length: rowCount }, (_, index) => 70 - index * (48 / Math.max(1, rowCount - 1)));
+  // Y range: 14 (top/FWD) → 78 (bottom/DEF), keeping slots well inside pitch edges
+  if (rowCount === 2) return [65, 30];
+  if (rowCount === 3) return [68, 48, 26];
+  if (rowCount === 4) return [70, 56, 42, 24];
+  return Array.from({ length: rowCount }, (_, index) => 70 - index * (46 / Math.max(1, rowCount - 1)));
 }
 
 function getRoleForRow(rowIndex: number, rowCount: number): AppRole {
@@ -384,26 +386,42 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function PitchLines() {
+  // viewBox uses a portrait aspect ratio (100×160) matching the pitch container.
+  // preserveAspectRatio="none" is intentionally NOT used so circles stay circular.
   return (
-    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      <rect x="4" y="3" width="92" height="94" rx="2" fill="none" stroke="rgba(255,255,255,.24)" strokeWidth="0.45" />
-      <line x1="4" y1="50" x2="96" y2="50" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
-      <circle cx="50" cy="50" r="10" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
-      <circle cx="50" cy="50" r="0.8" fill="rgba(255,255,255,.25)" />
-
-      <rect x="22" y="3" width="56" height="17" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
-      <rect x="36" y="3" width="28" height="7" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
-      <circle cx="50" cy="24" r="0.8" fill="rgba(255,255,255,.25)" />
-      <path d="M40 20 Q50 27 60 20" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.35" />
-
-      <rect x="22" y="80" width="56" height="17" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
-      <rect x="36" y="90" width="28" height="7" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.35" />
-      <circle cx="50" cy="76" r="0.8" fill="rgba(255,255,255,.25)" />
-      <path d="M40 80 Q50 73 60 80" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.35" />
-
+    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 160" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      {/* Grass stripes */}
       {Array.from({ length: 9 }).map((_, index) => (
-        <rect key={index} x={4 + index * 10.2} y="3" width="10.2" height="94" fill={index % 2 === 0 ? "rgba(255,255,255,.035)" : "rgba(0,0,0,.035)"} />
+        <rect key={index} x={4 + index * 10.2} y="3" width="10.2" height="154" fill={index % 2 === 0 ? "rgba(255,255,255,.035)" : "rgba(0,0,0,.035)"} />
       ))}
+
+      {/* Outer boundary */}
+      <rect x="4" y="3" width="92" height="154" rx="2" fill="none" stroke="rgba(255,255,255,.24)" strokeWidth="0.6" />
+
+      {/* Halfway line */}
+      <line x1="4" y1="80" x2="96" y2="80" stroke="rgba(255,255,255,.2)" strokeWidth="0.5" />
+
+      {/* Centre circle — r=12 in a 100×160 viewBox renders as a true circle */}
+      <circle cx="50" cy="80" r="12" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="0.5" />
+      <circle cx="50" cy="80" r="1" fill="rgba(255,255,255,.3)" />
+
+      {/* Top penalty area */}
+      <rect x="22" y="3" width="56" height="26" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      {/* Top goal area */}
+      <rect x="36" y="3" width="28" height="10" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      {/* Top penalty spot */}
+      <circle cx="50" cy="36" r="1" fill="rgba(255,255,255,.25)" />
+      {/* Top penalty arc */}
+      <path d="M38 29 Q50 38 62 29" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.45" />
+
+      {/* Bottom penalty area */}
+      <rect x="22" y="131" width="56" height="26" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      {/* Bottom goal area */}
+      <rect x="36" y="147" width="28" height="10" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      {/* Bottom penalty spot */}
+      <circle cx="50" cy="124" r="1" fill="rgba(255,255,255,.25)" />
+      {/* Bottom penalty arc */}
+      <path d="M38 131 Q50 122 62 131" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.45" />
     </svg>
   );
 }
