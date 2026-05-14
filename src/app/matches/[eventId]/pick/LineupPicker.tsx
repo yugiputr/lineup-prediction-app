@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useRef, useMemo, useState, useCallback } from "react";
 import { ImageWithFallback } from "@/components/ImageWithFallback";
 import { getPlayerImageUrl, type AppPlayer, type AppRole } from "@/lib/by433";
 
@@ -17,6 +17,8 @@ type PitchSlot = {
   x: number;
   y: number;
 };
+
+type SlotOverrides = Record<string, { x: number; y: number }>;
 
 const FORMATIONS = ["4-3-3", "4-3-2-1", "4-2-3-1", "4-4-2", "3-5-2", "3-4-3", "5-3-2", "5-4-1"];
 
@@ -36,10 +38,19 @@ export function LineupPicker({ players, teamName, teamLogoUrl, shirtColor, initi
   const [picks, setPicks] = useState<Pick[]>([]);
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [slotOverrides, setSlotOverrides] = useState<SlotOverrides>({});
+  const pitchRef = useRef<HTMLDivElement>(null);
 
   const selectedPlayerIds = new Set(picks.map((pick) => pick.playerId));
   const picksBySlot = new Map(picks.map((pick) => [pick.slotId, pick]));
-  const activeSlot = pitchSlots.find((slot) => slot.id === activeSlotId) ?? null;
+
+  // Resolve final slot position: override takes precedence over default
+  const resolvedSlots = useMemo(
+    () => pitchSlots.map((slot) => ({ ...slot, ...(slotOverrides[slot.id] ?? {}) })),
+    [pitchSlots, slotOverrides],
+  );
+
+  const activeSlot = resolvedSlots.find((slot) => slot.id === activeSlotId) ?? null;
   const activePick = activeSlotId ? picksBySlot.get(activeSlotId) : null;
   const activePlayer = activePick ? availablePlayers.find((player) => player.id === activePick.playerId) : null;
 
@@ -79,6 +90,56 @@ export function LineupPicker({ players, teamName, teamLogoUrl, shirtColor, initi
     setQuery("");
   }
 
+  // Drag handler — returns pointer event handlers for a given slot
+  const makeDragHandlers = useCallback(
+    (slot: PitchSlot & { x: number; y: number }) => {
+      return {
+        onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+          // Only primary pointer (left mouse / first touch)
+          if (e.button !== 0 && e.pointerType === "mouse") return;
+          e.currentTarget.setPointerCapture(e.pointerId);
+
+          const startX = e.clientX;
+          const startY = e.clientY;
+          let dragging = false;
+
+          const onMove = (moveEvent: PointerEvent) => {
+            const dx = moveEvent.clientX - startX;
+            const dy = moveEvent.clientY - startY;
+            // Start drag only after 6px movement to avoid accidental drags
+            if (!dragging && Math.hypot(dx, dy) < 6) return;
+            dragging = true;
+
+            const pitch = pitchRef.current;
+            if (!pitch) return;
+            const rect = pitch.getBoundingClientRect();
+            const newX = clamp(((moveEvent.clientX - rect.left) / rect.width) * 100, 5, 95);
+            const newY = clamp(((moveEvent.clientY - rect.top) / rect.height) * 100, 5, 95);
+
+            setSlotOverrides((prev) => ({ ...prev, [slot.id]: { x: newX, y: newY } }));
+          };
+
+          const onUp = (upEvent: PointerEvent) => {
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+
+            const dx = upEvent.clientX - startX;
+            const dy = upEvent.clientY - startY;
+            // If barely moved, treat as a tap → open picker
+            if (Math.hypot(dx, dy) < 6) {
+              openSlot(slot);
+            }
+          };
+
+          window.addEventListener("pointermove", onMove);
+          window.addEventListener("pointerup", onUp);
+        },
+      };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pitchRef],
+  );
+
   if (!formation) {
     return (
       <section className="rounded-[2rem] bg-white p-4 shadow-sm ring-1 ring-zinc-200 md:p-6">
@@ -115,10 +176,15 @@ export function LineupPicker({ players, teamName, teamLogoUrl, shirtColor, initi
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-bold uppercase tracking-wide text-emerald-600">Step 2</p>
-              <h2 className="text-lg font-black md:text-2xl">Tap posisi di pitch</h2>
+              <h2 className="text-lg font-black md:text-2xl">Tap atau geser posisi</h2>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => { setFormation(null); setPicks([]); }} className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700">Ganti</button>
+              <button
+                onClick={() => { setFormation(null); setPicks([]); setSlotOverrides({}); }}
+                className="rounded-2xl border border-zinc-200 bg-white px-3 py-2 text-xs font-black text-zinc-700"
+              >
+                Ganti
+              </button>
               <div className="rounded-2xl bg-zinc-950 px-3 py-2 text-right text-white">
                 <p className="text-[10px] font-bold text-zinc-300">Selected</p>
                 <p className="text-lg font-black">{picks.length}/11</p>
@@ -127,25 +193,26 @@ export function LineupPicker({ players, teamName, teamLogoUrl, shirtColor, initi
           </div>
         </div>
 
-        <div className="relative h-[calc(100dvh-245px)] min-h-[500px] overflow-hidden rounded-[1.5rem] border border-white/20 bg-[#064c09] shadow-inner sm:h-[620px] md:h-[760px]">
+        <div
+          ref={pitchRef}
+          className="relative h-[calc(100dvh-245px)] min-h-[500px] overflow-hidden rounded-[1.5rem] border border-white/20 bg-[#064c09] shadow-inner sm:h-[620px] md:h-[760px]"
+        >
           <PitchLines />
 
-          {pitchSlots.map((slot) => {
+          {resolvedSlots.map((slot) => {
             const pick = picksBySlot.get(slot.id);
             const player = pick ? getPlayer(pick.playerId) : null;
+            const dragHandlers = makeDragHandlers(slot);
 
             return (
               <div
                 key={slot.id}
-                className="absolute -translate-x-1/2 -translate-y-1/2"
+                className="absolute -translate-x-1/2 -translate-y-1/2 touch-none select-none"
                 style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
+                {...dragHandlers}
               >
-                <button
-                  type="button"
-                  onClick={() => openSlot(slot)}
-                  className="group flex w-16 flex-col items-center text-center md:w-24"
-                  title={`Choose ${slot.label}`}
-                >
+                {/* Inner wrapper — pointer-events-none so drag fires on outer div, not button */}
+                <div className="pointer-events-none flex w-16 flex-col items-center text-center md:w-24">
                   {player ? (
                     <>
                       <div className="relative grid h-10 w-10 place-items-center rounded-full bg-white shadow-lg ring-2 ring-emerald-300 md:h-14 md:w-14">
@@ -158,20 +225,20 @@ export function LineupPicker({ players, teamName, teamLogoUrl, shirtColor, initi
                     </>
                   ) : (
                     <>
-                      <div className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-white/45 bg-white/10 text-[10px] font-black text-white transition group-hover:border-emerald-300 group-hover:bg-emerald-400/25 md:h-20 md:w-20 md:text-xs">
+                      <div className="grid h-12 w-12 place-items-center rounded-full border-2 border-dashed border-white/45 bg-white/10 text-[10px] font-black text-white md:h-20 md:w-20 md:text-xs">
                         {slot.label}
                       </div>
                       <span className="mt-1 rounded-full bg-black/35 px-2 py-0.5 text-[9px] font-bold text-white">Tap</span>
                     </>
                   )}
-                </button>
+                </div>
               </div>
             );
           })}
         </div>
 
         <div className="mt-3 flex items-center justify-between gap-3">
-          <p className="text-xs font-semibold text-zinc-500 md:text-sm">Tap posisi kosong/terisi untuk pilih atau ganti pemain.</p>
+          <p className="text-xs font-semibold text-zinc-500 md:text-sm">Tap untuk pilih pemain · Geser untuk reposisi slot.</p>
           <button disabled={picks.length !== 11} className="rounded-full bg-zinc-950 px-5 py-3 text-sm font-black text-white disabled:bg-zinc-300">Submit</button>
         </div>
       </section>
@@ -386,42 +453,47 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function PitchLines() {
-  // viewBox uses a portrait aspect ratio (100×160) matching the pitch container.
-  // preserveAspectRatio="none" is intentionally NOT used so circles stay circular.
+  // viewBox "0 0 100 160" gives a portrait ratio so the centre circle stays circular.
+  // "xMidYMid meet" ensures the full pitch is always visible (no cropping).
+  // The SVG is sized to fill the container; empty space on the sides is covered by
+  // the green background of the parent div.
   return (
-    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 160" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+    <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 160" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      {/* Background fill so letterbox areas match the pitch colour */}
+      <rect x="0" y="0" width="100" height="160" fill="#064c09" />
+
       {/* Grass stripes */}
       {Array.from({ length: 9 }).map((_, index) => (
-        <rect key={index} x={4 + index * 10.2} y="3" width="10.2" height="154" fill={index % 2 === 0 ? "rgba(255,255,255,.035)" : "rgba(0,0,0,.035)"} />
+        <rect key={index} x={4 + index * 10.2} y="5" width="10.2" height="150" fill={index % 2 === 0 ? "rgba(255,255,255,.035)" : "rgba(0,0,0,.035)"} />
       ))}
 
-      {/* Outer boundary */}
-      <rect x="4" y="3" width="92" height="154" rx="2" fill="none" stroke="rgba(255,255,255,.24)" strokeWidth="0.6" />
+      {/* Outer boundary — inset from edges so the full border is visible */}
+      <rect x="4" y="5" width="92" height="150" rx="2" fill="none" stroke="rgba(255,255,255,.35)" strokeWidth="0.7" />
 
       {/* Halfway line */}
-      <line x1="4" y1="80" x2="96" y2="80" stroke="rgba(255,255,255,.2)" strokeWidth="0.5" />
+      <line x1="4" y1="80" x2="96" y2="80" stroke="rgba(255,255,255,.25)" strokeWidth="0.55" />
 
-      {/* Centre circle — r=12 in a 100×160 viewBox renders as a true circle */}
-      <circle cx="50" cy="80" r="12" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="0.5" />
-      <circle cx="50" cy="80" r="1" fill="rgba(255,255,255,.3)" />
+      {/* Centre circle — true circle because viewBox is portrait */}
+      <circle cx="50" cy="80" r="12" fill="none" stroke="rgba(255,255,255,.25)" strokeWidth="0.55" />
+      <circle cx="50" cy="80" r="1.2" fill="rgba(255,255,255,.35)" />
 
       {/* Top penalty area */}
-      <rect x="22" y="3" width="56" height="26" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      <rect x="22" y="5" width="56" height="26" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="0.5" />
       {/* Top goal area */}
-      <rect x="36" y="3" width="28" height="10" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      <rect x="36" y="5" width="28" height="10" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="0.5" />
       {/* Top penalty spot */}
-      <circle cx="50" cy="36" r="1" fill="rgba(255,255,255,.25)" />
+      <circle cx="50" cy="38" r="1" fill="rgba(255,255,255,.3)" />
       {/* Top penalty arc */}
-      <path d="M38 29 Q50 38 62 29" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.45" />
+      <path d="M38 31 Q50 40 62 31" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.5" />
 
       {/* Bottom penalty area */}
-      <rect x="22" y="131" width="56" height="26" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      <rect x="22" y="129" width="56" height="26" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="0.5" />
       {/* Bottom goal area */}
-      <rect x="36" y="147" width="28" height="10" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.45" />
+      <rect x="36" y="145" width="28" height="10" fill="none" stroke="rgba(255,255,255,.22)" strokeWidth="0.5" />
       {/* Bottom penalty spot */}
-      <circle cx="50" cy="124" r="1" fill="rgba(255,255,255,.25)" />
+      <circle cx="50" cy="122" r="1" fill="rgba(255,255,255,.3)" />
       {/* Bottom penalty arc */}
-      <path d="M38 131 Q50 122 62 131" fill="none" stroke="rgba(255,255,255,.18)" strokeWidth="0.45" />
+      <path d="M38 129 Q50 120 62 129" fill="none" stroke="rgba(255,255,255,.2)" strokeWidth="0.5" />
     </svg>
   );
 }
